@@ -969,4 +969,249 @@ describe('TypeInferrer', () => {
       });
     });
   });
+
+  describe('inferObjectShape', () => {
+    it('should infer empty object type', () => {
+      const declarator = getFirstVariableDeclarator('const x = {};');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toBe('{}');
+      expect(type.confidence).toBeGreaterThan(0.7);
+    });
+
+    it('should infer simple object with string property', () => {
+      const declarator = getFirstVariableDeclarator('const x = { name: "John" };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('name');
+      expect(type.value).toContain('string');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer object with number property', () => {
+      const declarator = getFirstVariableDeclarator('const x = { age: 30 };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('age');
+      expect(type.value).toContain('number');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer object with boolean property', () => {
+      const declarator = getFirstVariableDeclarator('const x = { active: true };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('active');
+      expect(type.value).toContain('boolean');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer object with multiple properties', () => {
+      const declarator = getFirstVariableDeclarator('const x = { name: "John", age: 30, active: true };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('name');
+      expect(type.value).toContain('string');
+      expect(type.value).toContain('age');
+      expect(type.value).toContain('number');
+      expect(type.value).toContain('active');
+      expect(type.value).toContain('boolean');
+    });
+
+    it('should infer nested object types', () => {
+      const declarator = getFirstVariableDeclarator('const x = { user: { name: "John", age: 30 } };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('user');
+      expect(type.value).toContain('name');
+      expect(type.value).toContain('string');
+      expect(type.value).toContain('age');
+      expect(type.value).toContain('number');
+    });
+
+    it('should infer object with array property', () => {
+      const declarator = getFirstVariableDeclarator('const x = { items: [1, 2, 3] };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('items');
+      expect(type.value).toContain('number[]');
+    });
+
+    it('should infer object with method', () => {
+      const declarator = getFirstVariableDeclarator('const x = { greet() { return "hello"; } };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('greet');
+      expect(type.value).toContain('=>');
+      expect(type.value).toContain('string');
+    });
+
+    it('should infer object with arrow function property', () => {
+      const declarator = getFirstVariableDeclarator('const x = { greet: () => "hello" };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('greet');
+    });
+
+    it('should handle object with numeric property names', () => {
+      const declarator = getFirstVariableDeclarator('const x = { 0: "zero", 1: "one" };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('0');
+      expect(type.value).toContain('1');
+      expect(type.value).toContain('string');
+    });
+
+    it('should handle object with string literal property names', () => {
+      const declarator = getFirstVariableDeclarator('const x = { "first-name": "John" };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('first-name');
+      expect(type.value).toContain('string');
+    });
+
+    it('should mark complex objects as needing interfaces', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = { 
+          name: "John", 
+          age: 30, 
+          email: "john@example.com",
+          address: "123 Main St"
+        };
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.needsInterface).toBe(true);
+      expect(type.interfaceName).toBeDefined();
+    });
+
+    it('should mark objects with nested objects as needing interfaces', () => {
+      const declarator = getFirstVariableDeclarator('const x = { user: { name: "John" } };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.needsInterface).toBe(true);
+    });
+
+    it('should mark objects with methods as needing interfaces', () => {
+      const declarator = getFirstVariableDeclarator('const x = { greet() { return "hello"; } };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.needsInterface).toBe(true);
+    });
+
+    it('should handle deeply nested objects', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = { 
+          level1: { 
+            level2: { 
+              level3: { 
+                value: 42 
+              } 
+            } 
+          } 
+        };
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('level1');
+      expect(type.value).toContain('level2');
+      expect(type.value).toContain('level3');
+      expect(type.value).toContain('value');
+      expect(type.value).toContain('number');
+    });
+
+    it('should handle object with mixed property types', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = { 
+          id: 1,
+          name: "Product",
+          price: 99.99,
+          inStock: true,
+          tags: ["new", "sale"],
+          metadata: { created: "2024-01-01" }
+        };
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('id');
+      expect(type.value).toContain('number');
+      expect(type.value).toContain('name');
+      expect(type.value).toContain('string');
+      expect(type.value).toContain('price');
+      expect(type.value).toContain('inStock');
+      expect(type.value).toContain('boolean');
+      expect(type.value).toContain('tags');
+      expect(type.value).toContain('string[]');
+      expect(type.value).toContain('metadata');
+    });
+
+    it('should return uncertain type for objects with spread properties', () => {
+      const declarator = getFirstVariableDeclarator('const x = { ...other, name: "John" };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toBe('object');
+      expect(type.confidence).toBeLessThan(0.7);
+    });
+
+    it('should return uncertain type for objects with computed property names', () => {
+      const declarator = getFirstVariableDeclarator('const x = { [key]: "value" };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toBe('object');
+      expect(type.confidence).toBeLessThan(0.7);
+    });
+
+    it('should handle object with null property', () => {
+      const declarator = getFirstVariableDeclarator('const x = { value: null };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('value');
+      expect(type.value).toContain('null');
+    });
+
+    it('should handle object with undefined property', () => {
+      const declarator = getFirstVariableDeclarator('const x = { value: undefined };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('value');
+      expect(type.value).toContain('undefined');
+    });
+
+    it('should handle object with array of objects', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = { 
+          users: [
+            { name: "John", age: 30 },
+            { name: "Jane", age: 25 }
+          ]
+        };
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+      expect(type.value).toContain('users');
+      // Should detect array of objects
+      expect(type.value).toMatch(/\[\]/);
+    });
+  });
 });

@@ -9,6 +9,7 @@ import {
   createPrimitiveType,
   createArrayType,
   createUnknownType,
+  createObjectType,
   createFunctionType,
   mergeTypes
 } from './types';
@@ -78,6 +79,11 @@ export class TypeInferrer {
     // Handle array expressions
     if (t.isArrayExpression(node)) {
       return this.inferArrayType(node, context);
+    }
+
+    // Handle object expressions
+    if (t.isObjectExpression(node)) {
+      return this.inferObjectShape(node, context);
     }
 
     // Handle identifiers (variable references)
@@ -487,6 +493,158 @@ export class TypeInferrer {
 
     // For property access, we'd need object shape inference (future task)
     return createUnknownType(0.2);
+  }
+
+  /**
+   * Infer the shape of an object literal expression
+   * @param node - ObjectExpression AST node
+   * @param context - Type context
+   * @returns Inferred object type with optional interface information
+   */
+  inferObjectShape(node: t.ObjectExpression, context: TypeContext): InferredType {
+    // Empty object
+    if (node.properties.length === 0) {
+      return createObjectType('{}', 0.8);
+    }
+
+    const properties: Array<{ name: string; type: InferredType; optional: boolean; method: boolean }> = [];
+    let totalConfidence = 0;
+    let propertyCount = 0;
+
+    for (const prop of node.properties) {
+      // Handle spread properties
+      if (t.isSpreadElement(prop)) {
+        // Spread makes the shape uncertain
+        return createObjectType('object', 0.5);
+      }
+
+      // Handle object methods and properties
+      if (t.isObjectProperty(prop) || t.isObjectMethod(prop)) {
+        let propertyName: string | undefined;
+        let optional = false;
+
+        // Get property name
+        if (t.isIdentifier(prop.key) && !prop.computed) {
+          propertyName = prop.key.name;
+        } else if (t.isStringLiteral(prop.key)) {
+          propertyName = prop.key.value;
+        } else if (t.isNumericLiteral(prop.key)) {
+          propertyName = String(prop.key.value);
+        } else {
+          // Computed or complex property names make shape uncertain
+          return createObjectType('object', 0.5);
+        }
+
+        // Infer property type
+        let propertyType: InferredType;
+        let isMethod = false;
+
+        if (t.isObjectMethod(prop)) {
+          // Object method
+          isMethod = true;
+          const returnType = this.inferFunctionReturnType(prop, context);
+          const paramTypes = this.inferParameterTypes(prop, context);
+          
+          // Build function signature
+          const paramSignature = paramTypes.map((pt, idx) => `arg${idx}: ${pt.value}`).join(', ');
+          propertyType = createFunctionType(`(${paramSignature}) => ${returnType.value}`, returnType.confidence);
+        } else if (t.isObjectProperty(prop)) {
+          // Regular property
+          if (t.isExpression(prop.value)) {
+            // Handle nested objects recursively
+            if (t.isObjectExpression(prop.value)) {
+              propertyType = this.inferObjectShape(prop.value, context);
+            } else {
+              propertyType = this.inferExpressionType(prop.value, context);
+            }
+          } else if (t.isPatternLike(prop.value)) {
+            propertyType = createUnknownType(0.3);
+          } else {
+            propertyType = createUnknownType(0.3);
+          }
+        } else {
+          propertyType = createUnknownType(0.3);
+        }
+
+        properties.push({
+          name: propertyName,
+          type: propertyType,
+          optional,
+          method: isMethod
+        });
+
+        totalConfidence += propertyType.confidence;
+        propertyCount++;
+      }
+    }
+
+    // Calculate average confidence
+    const avgConfidence = propertyCount > 0 ? totalConfidence / propertyCount : 0.5;
+
+    // Build inline type representation
+    const typeString = this.buildInlineObjectType(properties);
+
+    // Determine if this object should have an interface
+    // Complex objects (more than 3 properties or nested objects) should have interfaces
+    const shouldHaveInterface = properties.length > 3 || 
+      properties.some(p => p.type.kind === 'object' || p.type.kind === 'function');
+
+    if (shouldHaveInterface) {
+      // Generate a unique interface name (will be refined later with context)
+      const interfaceName = this.generateInterfaceName(context);
+      return createObjectType(typeString, avgConfidence, true, interfaceName);
+    }
+
+    return createObjectType(typeString, avgConfidence);
+  }
+
+  /**
+   * Build an inline object type string from properties
+   * @param properties - Array of property information
+   * @returns Type string representation
+   */
+  private buildInlineObjectType(
+    properties: Array<{ name: string; type: InferredType; optional: boolean; method: boolean }>
+  ): string {
+    if (properties.length === 0) {
+      return '{}';
+    }
+
+    const propStrings = properties.map(prop => {
+      const optionalMarker = prop.optional ? '?' : '';
+      const propName = this.needsQuotes(prop.name) ? `"${prop.name}"` : prop.name;
+      return `${propName}${optionalMarker}: ${prop.type.value}`;
+    });
+
+    return `{ ${propStrings.join('; ')} }`;
+  }
+
+  /**
+   * Check if a property name needs quotes
+   * @param name - Property name
+   * @returns True if quotes are needed
+   */
+  private needsQuotes(name: string): boolean {
+    // Check if name is a valid identifier
+    const identifierRegex = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+    return !identifierRegex.test(name);
+  }
+
+  /**
+   * Generate a unique interface name
+   * @param context - Type context
+   * @returns Generated interface name
+   */
+  private generateInterfaceName(context: TypeContext): string {
+    let counter = context.interfaces.size + 1;
+    let name = `Interface${counter}`;
+    
+    while (context.interfaces.has(name)) {
+      counter++;
+      name = `Interface${counter}`;
+    }
+    
+    return name;
   }
 
   /**
