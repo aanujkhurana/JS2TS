@@ -544,4 +544,429 @@ describe('TypeInferrer', () => {
       expect(type.confidence).toBe(0.0);
     });
   });
+
+  describe('inferFunctionReturnType', () => {
+    /**
+     * Helper function to get function declaration from code
+     */
+    function getFunctionDeclaration(code: string): t.FunctionDeclaration {
+      const result = parser.parse(code);
+      const program = result.ast.program;
+      return program.body[0] as t.FunctionDeclaration;
+    }
+
+    /**
+     * Helper function to get function expression from code
+     */
+    function getFunctionExpression(code: string): t.FunctionExpression {
+      const result = parser.parse(code);
+      const program = result.ast.program;
+      const varDecl = program.body[0] as t.VariableDeclaration;
+      return varDecl.declarations[0].init as t.FunctionExpression;
+    }
+
+    /**
+     * Helper function to get arrow function from code
+     */
+    function getArrowFunction(code: string): t.ArrowFunctionExpression {
+      const result = parser.parse(code);
+      const program = result.ast.program;
+      const varDecl = program.body[0] as t.VariableDeclaration;
+      return varDecl.declarations[0].init as t.ArrowFunctionExpression;
+    }
+
+    describe('Function Declarations', () => {
+      it('should infer string return type from string literal', () => {
+        const func = getFunctionDeclaration('function test() { return "hello"; }');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('string');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer number return type from number literal', () => {
+        const func = getFunctionDeclaration('function test() { return 42; }');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('number');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer boolean return type from boolean literal', () => {
+        const func = getFunctionDeclaration('function test() { return true; }');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('boolean');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer void return type when no return statement', () => {
+        const func = getFunctionDeclaration('function test() { console.log("hi"); }');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('void');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer void return type from empty return', () => {
+        const func = getFunctionDeclaration('function test() { return; }');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('void');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer union type from multiple different return types', () => {
+        const func = getFunctionDeclaration(`
+          function test(x) {
+            if (x) {
+              return "string";
+            } else {
+              return 42;
+            }
+          }
+        `);
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.value).toContain('string');
+        expect(returnType.value).toContain('number');
+        expect(returnType.confidence).toBeLessThan(1.0);
+      });
+
+      it('should infer consistent type from multiple same-type returns', () => {
+        const func = getFunctionDeclaration(`
+          function test(x) {
+            if (x > 0) {
+              return "positive";
+            } else {
+              return "negative";
+            }
+          }
+        `);
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('string');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should handle nested return statements', () => {
+        const func = getFunctionDeclaration(`
+          function test(x) {
+            if (x > 0) {
+              if (x > 10) {
+                return 100;
+              }
+              return 10;
+            }
+            return 0;
+          }
+        `);
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('number');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should handle return in loops', () => {
+        const func = getFunctionDeclaration(`
+          function test(arr) {
+            for (let i = 0; i < arr.length; i++) {
+              if (arr[i] === 5) {
+                return true;
+              }
+            }
+            return false;
+          }
+        `);
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('boolean');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should handle return in switch statements', () => {
+        const func = getFunctionDeclaration(`
+          function test(x) {
+            switch (x) {
+              case 1:
+                return "one";
+              case 2:
+                return "two";
+              default:
+                return "other";
+            }
+          }
+        `);
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('string');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should handle return in try-catch', () => {
+        const func = getFunctionDeclaration(`
+          function test() {
+            try {
+              return "success";
+            } catch (e) {
+              return "error";
+            }
+          }
+        `);
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('string');
+        expect(returnType.confidence).toBe(1.0);
+      });
+    });
+
+    describe('Function Expressions', () => {
+      it('should infer return type from function expression', () => {
+        const func = getFunctionExpression('const test = function() { return 123; };');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('number');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer void from function expression without return', () => {
+        const func = getFunctionExpression('const test = function() { console.log("hi"); };');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('void');
+        expect(returnType.confidence).toBe(1.0);
+      });
+    });
+
+    describe('Arrow Functions', () => {
+      it('should infer return type from arrow function with expression body', () => {
+        const func = getArrowFunction('const test = () => "hello";');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('string');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer return type from arrow function with number expression', () => {
+        const func = getArrowFunction('const test = () => 42;');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('number');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer return type from arrow function with block body', () => {
+        const func = getArrowFunction('const test = () => { return true; };');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('boolean');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer void from arrow function with block but no return', () => {
+        const func = getArrowFunction('const test = () => { console.log("hi"); };');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('primitive');
+        expect(returnType.value).toBe('void');
+        expect(returnType.confidence).toBe(1.0);
+      });
+
+      it('should infer array return type from arrow function', () => {
+        const func = getArrowFunction('const test = () => [1, 2, 3];');
+        const returnType = inferrer.inferFunctionReturnType(func, context);
+        
+        expect(returnType.kind).toBe('array');
+        expect(returnType.value).toBe('number[]');
+        expect(returnType.confidence).toBe(1.0);
+      });
+    });
+  });
+
+  describe('inferParameterTypes', () => {
+    /**
+     * Helper function to get function declaration from code
+     */
+    function getFunctionDeclaration(code: string): t.FunctionDeclaration {
+      const result = parser.parse(code);
+      const program = result.ast.program;
+      return program.body[0] as t.FunctionDeclaration;
+    }
+
+    /**
+     * Helper function to get arrow function from code
+     */
+    function getArrowFunction(code: string): t.ArrowFunctionExpression {
+      const result = parser.parse(code);
+      const program = result.ast.program;
+      const varDecl = program.body[0] as t.VariableDeclaration;
+      return varDecl.declarations[0].init as t.ArrowFunctionExpression;
+    }
+
+    describe('Parameter Usage Analysis', () => {
+      it('should infer number type from arithmetic operations', () => {
+        const func = getFunctionDeclaration('function test(x) { return x * 2; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('number');
+        expect(paramTypes[0].confidence).toBeGreaterThan(0.7);
+      });
+
+      it('should infer number type from subtraction', () => {
+        const func = getFunctionDeclaration('function test(a, b) { return a - b; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(2);
+        expect(paramTypes[0].value).toBe('number');
+        expect(paramTypes[1].value).toBe('number');
+      });
+
+      it('should infer string type from string methods', () => {
+        const func = getFunctionDeclaration('function test(str) { return str.toLowerCase(); }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('string');
+        expect(paramTypes[0].confidence).toBeGreaterThan(0.6);
+      });
+
+      it('should infer array type from array methods', () => {
+        const func = getFunctionDeclaration('function test(arr) { return arr.map(x => x); }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].kind).toBe('array');
+        expect(paramTypes[0].confidence).toBeGreaterThan(0.6);
+      });
+
+      it('should infer Function type when parameter is called', () => {
+        const func = getFunctionDeclaration('function test(callback) { return callback(); }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('Function');
+        expect(paramTypes[0].confidence).toBeGreaterThan(0.7);
+      });
+
+      it('should return unknown for unused parameters', () => {
+        const func = getFunctionDeclaration('function test(x) { return 42; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].kind).toBe('unknown');
+      });
+
+      it('should handle multiple parameters with different types', () => {
+        const func = getFunctionDeclaration(`
+          function test(num, str, arr) {
+            return num * 2 + str.toUpperCase() + arr.map(x => x);
+          }
+        `);
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(3);
+        expect(paramTypes[0].value).toBe('number');
+        expect(paramTypes[1].value).toBe('string');
+        expect(paramTypes[2].kind).toBe('array');
+      });
+    });
+
+    describe('Default Parameters', () => {
+      it('should infer type from default value', () => {
+        const func = getFunctionDeclaration('function test(x = 10) { return x; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('number');
+        expect(paramTypes[0].confidence).toBe(1.0);
+      });
+
+      it('should infer string type from default string', () => {
+        const func = getFunctionDeclaration('function test(name = "default") { return name; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('string');
+        expect(paramTypes[0].confidence).toBe(1.0);
+      });
+
+      it('should infer boolean type from default boolean', () => {
+        const func = getFunctionDeclaration('function test(flag = true) { return flag; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('boolean');
+        expect(paramTypes[0].confidence).toBe(1.0);
+      });
+    });
+
+    describe('Rest Parameters', () => {
+      it('should infer array type for rest parameters', () => {
+        const func = getFunctionDeclaration('function test(...args) { return args; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].kind).toBe('array');
+      });
+    });
+
+    describe('Destructured Parameters', () => {
+      it('should infer object type for object destructuring', () => {
+        const func = getFunctionDeclaration('function test({ x, y }) { return x + y; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('object');
+      });
+
+      it('should infer array type for array destructuring', () => {
+        const func = getFunctionDeclaration('function test([a, b]) { return a + b; }');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].kind).toBe('array');
+      });
+    });
+
+    describe('Arrow Functions', () => {
+      it('should infer parameter types in arrow functions', () => {
+        const func = getArrowFunction('const test = (x) => x * 2;');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('number');
+      });
+
+      it('should infer string parameter in arrow function', () => {
+        const func = getArrowFunction('const test = (str) => str.toUpperCase();');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(1);
+        expect(paramTypes[0].value).toBe('string');
+      });
+
+      it('should handle arrow function with no parameters', () => {
+        const func = getArrowFunction('const test = () => 42;');
+        const paramTypes = inferrer.inferParameterTypes(func, context);
+        
+        expect(paramTypes).toHaveLength(0);
+      });
+    });
+  });
 });

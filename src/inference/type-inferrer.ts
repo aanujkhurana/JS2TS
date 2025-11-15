@@ -9,6 +9,7 @@ import {
   createPrimitiveType,
   createArrayType,
   createUnknownType,
+  createFunctionType,
   mergeTypes
 } from './types';
 
@@ -486,5 +487,333 @@ export class TypeInferrer {
 
     // For property access, we'd need object shape inference (future task)
     return createUnknownType(0.2);
+  }
+
+  /**
+   * Infer the return type of a function by analyzing its return statements
+   * @param node - Function node (FunctionDeclaration, FunctionExpression, or ArrowFunctionExpression)
+   * @param context - Type context
+   * @returns Inferred return type with confidence score
+   */
+  inferFunctionReturnType(
+    node: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    context: TypeContext
+  ): InferredType {
+    // Handle arrow functions with expression body (implicit return)
+    if (t.isArrowFunctionExpression(node) && !t.isBlockStatement(node.body)) {
+      return this.inferExpressionType(node.body, context);
+    }
+
+    // For block statements, collect all return statements
+    const returnStatements: t.ReturnStatement[] = [];
+    
+    if (t.isBlockStatement(node.body)) {
+      this.collectReturnStatements(node.body, returnStatements);
+    }
+
+    // If no return statements found, function returns void
+    if (returnStatements.length === 0) {
+      return createPrimitiveType('void', 1.0);
+    }
+
+    // Infer types from all return statements
+    const returnTypes: InferredType[] = [];
+    for (const returnStmt of returnStatements) {
+      if (returnStmt.argument) {
+        const returnType = this.inferExpressionType(returnStmt.argument, context);
+        returnTypes.push(returnType);
+      } else {
+        // Return without argument is void
+        returnTypes.push(createPrimitiveType('void', 1.0));
+      }
+    }
+
+    // If all returns are void, return void
+    if (returnTypes.every(t => t.value === 'void')) {
+      return createPrimitiveType('void', 1.0);
+    }
+
+    // Merge all return types
+    let mergedType = returnTypes[0];
+    for (let i = 1; i < returnTypes.length; i++) {
+      mergedType = mergeTypes(mergedType, returnTypes[i]);
+    }
+
+    // Calculate confidence based on consistency
+    const allSameType = returnTypes.every(t => t.value === returnTypes[0].value);
+    const confidence = allSameType ? 
+      Math.min(...returnTypes.map(t => t.confidence)) : 
+      mergedType.confidence * 0.85;
+
+    return {
+      ...mergedType,
+      confidence
+    };
+  }
+
+  /**
+   * Recursively collect all return statements from a block statement
+   * @param node - Block statement or nested statement
+   * @param returnStatements - Array to collect return statements
+   */
+  private collectReturnStatements(
+    node: t.Statement | t.BlockStatement,
+    returnStatements: t.ReturnStatement[]
+  ): void {
+    if (t.isReturnStatement(node)) {
+      returnStatements.push(node);
+      return;
+    }
+
+    if (t.isBlockStatement(node)) {
+      for (const statement of node.body) {
+        this.collectReturnStatements(statement, returnStatements);
+      }
+    } else if (t.isIfStatement(node)) {
+      this.collectReturnStatements(node.consequent, returnStatements);
+      if (node.alternate) {
+        this.collectReturnStatements(node.alternate, returnStatements);
+      }
+    } else if (t.isWhileStatement(node) || t.isDoWhileStatement(node)) {
+      this.collectReturnStatements(node.body, returnStatements);
+    } else if (t.isForStatement(node) || t.isForInStatement(node) || t.isForOfStatement(node)) {
+      this.collectReturnStatements(node.body, returnStatements);
+    } else if (t.isSwitchStatement(node)) {
+      for (const switchCase of node.cases) {
+        for (const statement of switchCase.consequent) {
+          this.collectReturnStatements(statement, returnStatements);
+        }
+      }
+    } else if (t.isTryStatement(node)) {
+      this.collectReturnStatements(node.block, returnStatements);
+      if (node.handler) {
+        this.collectReturnStatements(node.handler.body, returnStatements);
+      }
+      if (node.finalizer) {
+        this.collectReturnStatements(node.finalizer, returnStatements);
+      }
+    } else if (t.isLabeledStatement(node)) {
+      this.collectReturnStatements(node.body, returnStatements);
+    }
+  }
+
+  /**
+   * Infer parameter types by analyzing how they are used within the function
+   * @param node - Function node (FunctionDeclaration, FunctionExpression, or ArrowFunctionExpression)
+   * @param context - Type context
+   * @returns Array of inferred parameter types
+   */
+  inferParameterTypes(
+    node: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    context: TypeContext
+  ): InferredType[] {
+    const paramTypes: InferredType[] = [];
+
+    for (const param of node.params) {
+      const paramType = this.inferParameterType(param, node, context);
+      paramTypes.push(paramType);
+    }
+
+    return paramTypes;
+  }
+
+  /**
+   * Infer a single parameter's type by analyzing its usage
+   * @param param - Parameter node
+   * @param functionNode - The function containing this parameter
+   * @param context - Type context
+   * @returns Inferred parameter type
+   */
+  private inferParameterType(
+    param: t.Identifier | t.Pattern | t.RestElement | t.TSParameterProperty,
+    functionNode: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    context: TypeContext
+  ): InferredType {
+    // Handle rest parameters
+    if (t.isRestElement(param)) {
+      const elementType = this.inferParameterType(param.argument as any, functionNode, context);
+      return createArrayType(elementType.value, elementType.confidence * 0.9);
+    }
+
+    // Handle assignment patterns (default parameters)
+    if (t.isAssignmentPattern(param)) {
+      // Infer from the default value
+      return this.inferExpressionType(param.right, context);
+    }
+
+    // Handle array destructuring
+    if (t.isArrayPattern(param)) {
+      return createArrayType('unknown', 0.5);
+    }
+
+    // Handle object destructuring
+    if (t.isObjectPattern(param)) {
+      return createPrimitiveType('object', 0.5);
+    }
+
+    // For simple identifiers, analyze usage within the function body
+    if (t.isIdentifier(param)) {
+      return this.inferParameterTypeFromUsage(param, functionNode, context);
+    }
+
+    return createUnknownType(0.0);
+  }
+
+  /**
+   * Infer parameter type by analyzing how it's used in the function body
+   * @param param - Parameter identifier
+   * @param functionNode - The function containing this parameter
+   * @param context - Type context
+   * @returns Inferred parameter type based on usage
+   */
+  private inferParameterTypeFromUsage(
+    param: t.Identifier,
+    functionNode: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    context: TypeContext
+  ): InferredType {
+    const usageTypes: InferredType[] = [];
+    const paramName = param.name;
+
+    // Helper to analyze parameter usage in expressions
+    const analyzeExpression = (expr: t.Node): void => {
+      // Check if parameter is used in binary operations
+      if (t.isBinaryExpression(expr)) {
+        if (t.isIdentifier(expr.left) && expr.left.name === paramName) {
+          // Infer from operator
+          if (['-', '*', '/', '%', '**'].includes(expr.operator)) {
+            usageTypes.push(createPrimitiveType('number', 0.8));
+          }
+        }
+        if (t.isIdentifier(expr.right) && expr.right.name === paramName) {
+          if (['-', '*', '/', '%', '**'].includes(expr.operator)) {
+            usageTypes.push(createPrimitiveType('number', 0.8));
+          }
+        }
+      }
+
+      // Check if parameter is used in unary operations
+      if (t.isUnaryExpression(expr)) {
+        if (t.isIdentifier(expr.argument) && expr.argument.name === paramName) {
+          if (['+', '-', '~'].includes(expr.operator)) {
+            usageTypes.push(createPrimitiveType('number', 0.8));
+          } else if (expr.operator === '!') {
+            usageTypes.push(createPrimitiveType('boolean', 0.7));
+          }
+        }
+      }
+
+      // Check if parameter is used in member expressions (property access)
+      if (t.isMemberExpression(expr)) {
+        if (t.isIdentifier(expr.object) && expr.object.name === paramName) {
+          // Check for array and string methods
+          if (t.isIdentifier(expr.property) && !expr.computed) {
+            const methodName = expr.property.name;
+            // Array-specific methods (not shared with strings)
+            if (['map', 'filter', 'reduce', 'forEach', 'find', 'some', 'every', 'push', 'pop', 'shift', 'unshift', 'slice', 'splice', 'join'].includes(methodName)) {
+              usageTypes.push(createArrayType('unknown', 0.7));
+            }
+            // String-specific methods (not shared with arrays)
+            else if (['toLowerCase', 'toUpperCase', 'trim', 'split', 'substring', 'substr', 'charAt', 'charCodeAt', 'startsWith', 'endsWith', 'replace', 'replaceAll', 'match', 'search', 'padStart', 'padEnd', 'repeat', 'concat'].includes(methodName)) {
+              usageTypes.push(createPrimitiveType('string', 0.7));
+            }
+            // Shared methods - need more context, lower confidence
+            else if (methodName === 'includes' || methodName === 'indexOf' || methodName === 'lastIndexOf') {
+              // These exist on both arrays and strings, so we can't be sure
+              // Don't add a type here, let other usage patterns determine it
+            }
+            // length property - very weak signal, skip it
+            else if (methodName === 'length') {
+              // Both arrays and strings have length, so this doesn't help us
+              // Don't add a type here
+            }
+          }
+        }
+      }
+
+      // Check if parameter is called as a function
+      if (t.isCallExpression(expr)) {
+        if (t.isIdentifier(expr.callee) && expr.callee.name === paramName) {
+          usageTypes.push(createPrimitiveType('Function', 0.8));
+        }
+      }
+    };
+
+    // Traverse the function body to find parameter usage
+    const traverseNode = (node: t.Node): void => {
+      if (t.isBlockStatement(node)) {
+        for (const statement of node.body) {
+          traverseNode(statement);
+        }
+      } else if (t.isExpressionStatement(node)) {
+        analyzeExpression(node.expression);
+        traverseNode(node.expression);
+      } else if (t.isReturnStatement(node) && node.argument) {
+        analyzeExpression(node.argument);
+        traverseNode(node.argument);
+      } else if (t.isIfStatement(node)) {
+        analyzeExpression(node.test);
+        traverseNode(node.test);
+        traverseNode(node.consequent);
+        if (node.alternate) {
+          traverseNode(node.alternate);
+        }
+      } else if (t.isVariableDeclaration(node)) {
+        for (const declarator of node.declarations) {
+          if (declarator.init) {
+            analyzeExpression(declarator.init);
+            traverseNode(declarator.init);
+          }
+        }
+      } else if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
+        analyzeExpression(node);
+        traverseNode(node.left);
+        traverseNode(node.right);
+      } else if (t.isUnaryExpression(node)) {
+        analyzeExpression(node);
+        traverseNode(node.argument);
+      } else if (t.isMemberExpression(node)) {
+        analyzeExpression(node);
+        traverseNode(node.object);
+        if (t.isExpression(node.property)) {
+          traverseNode(node.property);
+        }
+      } else if (t.isCallExpression(node)) {
+        analyzeExpression(node);
+        traverseNode(node.callee);
+        for (const arg of node.arguments) {
+          if (t.isExpression(arg)) {
+            traverseNode(arg);
+          }
+        }
+      } else if (t.isArrayExpression(node)) {
+        for (const element of node.elements) {
+          if (element && t.isExpression(element)) {
+            traverseNode(element);
+          }
+        }
+      }
+    };
+
+    // Analyze the function body
+    if (t.isBlockStatement(functionNode.body)) {
+      traverseNode(functionNode.body);
+    } else if (t.isExpression(functionNode.body)) {
+      // Arrow function with expression body
+      analyzeExpression(functionNode.body);
+      traverseNode(functionNode.body);
+    }
+
+    // If no usage found, return unknown
+    if (usageTypes.length === 0) {
+      return createUnknownType(0.3);
+    }
+
+    // Merge all usage types
+    let mergedType = usageTypes[0];
+    for (let i = 1; i < usageTypes.length; i++) {
+      mergedType = mergeTypes(mergedType, usageTypes[i]);
+    }
+
+    return mergedType;
   }
 }
