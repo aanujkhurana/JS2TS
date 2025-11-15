@@ -2,10 +2,11 @@
  * Unit tests for ConfigManager
  */
 
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigManager, ConfigValidationError } from '../../src/config/config-manager';
-import { Config, DEFAULT_CONFIG, DEFAULT_AI_CONFIG } from '../../src/config/types';
+import { DEFAULT_CONFIG, DEFAULT_AI_CONFIG } from '../../src/config/types';
 
 describe('ConfigManager', () => {
   let configManager: ConfigManager;
@@ -153,15 +154,16 @@ describe('ConfigManager', () => {
       expect(() => configManager.loadConfig(configPath)).not.toThrow();
     });
 
-    it('should throw error when aiMode is true but aiConfig is missing', () => {
+    it('should use default AI config when aiMode is true but aiConfig is missing', () => {
       const configPath = path.join(tempDir, 'missing-ai-config.json');
       const testConfig = {
         aiMode: true,
-        aiConfig: undefined,
       };
       fs.writeFileSync(configPath, JSON.stringify(testConfig));
       
-      expect(() => configManager.loadConfig(configPath)).toThrow('Config property "aiConfig" is required when aiMode is true');
+      const result = configManager.loadConfig(configPath);
+      expect(result.aiMode).toBe(true);
+      expect(result.aiConfig).toEqual(DEFAULT_AI_CONFIG);
     });
 
     it('should throw error for invalid AI provider', () => {
