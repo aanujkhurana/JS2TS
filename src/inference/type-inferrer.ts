@@ -826,14 +826,24 @@ export class TypeInferrer {
     paramType: string,
     context: TypeContext
   ): InferredType {
-    // Handle arrow functions
-    if (t.isArrowFunctionExpression(callback)) {
-      return this.inferFunctionReturnType(callback, context);
-    }
-
-    // Handle function expressions
-    if (t.isFunctionExpression(callback)) {
-      return this.inferFunctionReturnType(callback, context);
+    // Handle arrow functions and function expressions
+    if (t.isArrowFunctionExpression(callback) || t.isFunctionExpression(callback)) {
+      // Create a new context with the parameter type information
+      const callbackContext: TypeContext = {
+        scope: new Map(context.scope),
+        interfaces: context.interfaces,
+        imports: context.imports
+      };
+      
+      // Add parameter types to the context
+      if (callback.params.length > 0) {
+        const firstParam = callback.params[0];
+        if (t.isIdentifier(firstParam)) {
+          callbackContext.scope.set(firstParam.name, createPrimitiveType(paramType, 0.9));
+        }
+      }
+      
+      return this.inferFunctionReturnType(callback, callbackContext);
     }
 
     // Handle identifier (reference to a function)
