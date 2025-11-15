@@ -30,7 +30,98 @@ export class TypeInferrer {
       return createUnknownType(0.0);
     }
 
-    return this.inferExpressionType(node.init, context);
+    const inferredType = this.inferExpressionType(node.init, context);
+    
+    // Store the inferred type in context for later reference
+    if (t.isIdentifier(node.id)) {
+      context.scope.set(node.id.name, inferredType);
+    }
+    
+    return inferredType;
+  }
+
+  /**
+   * Infer union type from multiple assignments to the same variable
+   * @param assignments - Array of assignment expressions
+   * @param context - Type context
+   * @returns Inferred union type
+   */
+  inferUnionFromAssignments(
+    assignments: t.AssignmentExpression[],
+    context: TypeContext
+  ): InferredType {
+    if (assignments.length === 0) {
+      return createUnknownType(0.0);
+    }
+
+    const types: InferredType[] = [];
+    for (const assignment of assignments) {
+      const type = this.inferExpressionType(assignment.right, context);
+      types.push(type);
+    }
+
+    // Merge all types
+    let mergedType = types[0];
+    for (let i = 1; i < types.length; i++) {
+      mergedType = mergeTypes(mergedType, types[i]);
+    }
+
+    return mergedType;
+  }
+
+  /**
+   * Analyze a block of code to detect variables with multiple assignments
+   * @param statements - Array of statements to analyze
+   * @param context - Type context
+   * @returns Map of variable names to their union types
+   */
+  analyzeMultipleAssignments(
+    statements: t.Statement[],
+    context: TypeContext
+  ): Map<string, InferredType> {
+    const assignmentMap = new Map<string, t.AssignmentExpression[]>();
+    
+    // Collect all assignments
+    const collectAssignments = (node: t.Node): void => {
+      if (t.isAssignmentExpression(node)) {
+        if (t.isIdentifier(node.left)) {
+          const varName = node.left.name;
+          if (!assignmentMap.has(varName)) {
+            assignmentMap.set(varName, []);
+          }
+          assignmentMap.get(varName)!.push(node);
+        }
+      }
+      
+      // Recursively traverse child nodes
+      if (t.isBlockStatement(node)) {
+        node.body.forEach(collectAssignments);
+      } else if (t.isIfStatement(node)) {
+        collectAssignments(node.consequent);
+        if (node.alternate) {
+          collectAssignments(node.alternate);
+        }
+      } else if (t.isExpressionStatement(node)) {
+        collectAssignments(node.expression);
+      } else if (t.isWhileStatement(node) || t.isDoWhileStatement(node)) {
+        collectAssignments(node.body);
+      } else if (t.isForStatement(node) || t.isForInStatement(node) || t.isForOfStatement(node)) {
+        collectAssignments(node.body);
+      }
+    };
+    
+    statements.forEach(collectAssignments);
+    
+    // Infer union types for variables with multiple assignments
+    const result = new Map<string, InferredType>();
+    for (const [varName, assignments] of assignmentMap.entries()) {
+      if (assignments.length > 1) {
+        const unionType = this.inferUnionFromAssignments(assignments, context);
+        result.set(varName, unionType);
+      }
+    }
+    
+    return result;
   }
 
   /**
@@ -86,6 +177,14 @@ export class TypeInferrer {
       return this.inferObjectShape(node, context);
     }
 
+    // Handle function expressions and arrow functions
+    if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+      const returnType = this.inferFunctionReturnType(node, context);
+      const paramTypes = this.inferParameterTypes(node, context);
+      const paramSignature = paramTypes.map((pt, idx) => `arg${idx}: ${pt.value}`).join(', ');
+      return createFunctionType(`(${paramSignature}) => ${returnType.value}`, returnType.confidence);
+    }
+
     // Handle identifiers (variable references)
     if (t.isIdentifier(node)) {
       return this.inferIdentifierType(node, context);
@@ -116,9 +215,37 @@ export class TypeInferrer {
       return this.inferCallExpressionType(node, context);
     }
 
+    // Handle function declarations (shouldn't normally be in expression position, but handle it)
+    if (t.isFunctionDeclaration(node)) {
+      const returnType = this.inferFunctionReturnType(node, context);
+      const paramTypes = this.inferParameterTypes(node, context);
+      const paramSignature = paramTypes.map((pt, idx) => `arg${idx}: ${pt.value}`).join(', ');
+      return createFunctionType(`(${paramSignature}) => ${returnType.value}`, returnType.confidence);
+    }
+
     // Handle member expressions (e.g., obj.prop, arr[0])
     if (t.isMemberExpression(node)) {
       return this.inferMemberExpressionType(node, context);
+    }
+
+    // Handle assignment expressions
+    if (t.isAssignmentExpression(node)) {
+      return this.inferExpressionType(node.right, context);
+    }
+
+    // Handle sequence expressions (comma operator)
+    if (t.isSequenceExpression(node)) {
+      // Return type of the last expression
+      if (node.expressions.length > 0) {
+        return this.inferExpressionType(node.expressions[node.expressions.length - 1], context);
+      }
+    }
+
+    // Handle new expressions (constructor calls)
+    if (t.isNewExpression(node)) {
+      if (t.isIdentifier(node.callee)) {
+        return createPrimitiveType(node.callee.name, 0.9);
+      }
     }
 
     // Default to unknown for unsupported expression types
@@ -330,6 +457,22 @@ export class TypeInferrer {
       case 'Boolean':
         return createPrimitiveType('boolean', 1.0);
       case 'Array':
+        // Try to infer element type from arguments
+        if (args.length > 0) {
+          const elementTypes: InferredType[] = [];
+          for (const arg of args) {
+            if (t.isExpression(arg)) {
+              elementTypes.push(this.inferExpressionType(arg, context));
+            }
+          }
+          if (elementTypes.length > 0) {
+            let mergedType = elementTypes[0];
+            for (let i = 1; i < elementTypes.length; i++) {
+              mergedType = mergeTypes(mergedType, elementTypes[i]);
+            }
+            return createArrayType(mergedType.value, 0.8);
+          }
+        }
         return createArrayType('unknown', 0.7);
       case 'Object':
         return createPrimitiveType('object', 0.7);
@@ -338,7 +481,33 @@ export class TypeInferrer {
       case 'RegExp':
         return createPrimitiveType('RegExp', 1.0);
       case 'Promise':
+        // Try to infer Promise type from argument
+        if (args.length > 0 && t.isExpression(args[0])) {
+          const argType = this.inferExpressionType(args[0], context);
+          return createPrimitiveType(`Promise<${argType.value}>`, 0.8);
+        }
         return createPrimitiveType('Promise<unknown>', 0.8);
+      case 'Map':
+        return createPrimitiveType('Map<unknown, unknown>', 0.8);
+      case 'Set':
+        return createPrimitiveType('Set<unknown>', 0.8);
+      case 'WeakMap':
+        return createPrimitiveType('WeakMap<object, unknown>', 0.8);
+      case 'WeakSet':
+        return createPrimitiveType('WeakSet<object>', 0.8);
+      case 'Symbol':
+        return createPrimitiveType('symbol', 1.0);
+      case 'BigInt':
+        return createPrimitiveType('bigint', 1.0);
+      case 'isNaN':
+      case 'isFinite':
+        return createPrimitiveType('boolean', 1.0);
+      case 'JSON':
+        return createPrimitiveType('JSON', 1.0);
+      case 'Math':
+        return createPrimitiveType('Math', 1.0);
+      case 'console':
+        return createPrimitiveType('Console', 1.0);
       default:
         return createUnknownType(0.1);
     }
@@ -375,7 +544,7 @@ export class TypeInferrer {
 
     // Array methods
     if (objectType.kind === 'array') {
-      return this.inferArrayMethodReturnType(methodName, objectType, context);
+      return this.inferArrayMethodReturnType(methodName, objectType, args, context);
     }
 
     // String methods
@@ -383,54 +552,303 @@ export class TypeInferrer {
       return this.inferStringMethodReturnType(methodName);
     }
 
+    // Object static methods
+    if (objectType.value === 'Object' || (t.isIdentifier(memberExpr.object) && memberExpr.object.name === 'Object')) {
+      return this.inferObjectStaticMethodReturnType(methodName, args, context);
+    }
+
+    // Math methods
+    if (objectType.value === 'Math' || (t.isIdentifier(memberExpr.object) && memberExpr.object.name === 'Math')) {
+      return this.inferMathMethodReturnType(methodName);
+    }
+
+    // JSON methods
+    if (objectType.value === 'JSON' || (t.isIdentifier(memberExpr.object) && memberExpr.object.name === 'JSON')) {
+      return this.inferJSONMethodReturnType(methodName);
+    }
+
+    // Promise methods (both instance and static)
+    if (objectType.value.startsWith('Promise<') || (t.isIdentifier(memberExpr.object) && memberExpr.object.name === 'Promise')) {
+      return this.inferPromiseMethodReturnType(methodName, objectType, args, context);
+    }
+
     return createUnknownType(0.2);
+  }
+
+  /**
+   * Infer return type of Object static methods
+   * @param methodName - Name of the Object method
+   * @param args - Method arguments
+   * @param context - Type context
+   * @returns Inferred return type
+   */
+  private inferObjectStaticMethodReturnType(
+    methodName: string,
+    args: Array<t.Expression | t.SpreadElement | t.ArgumentPlaceholder>,
+    context: TypeContext
+  ): InferredType {
+    switch (methodName) {
+      case 'keys':
+        return createArrayType('string', 1.0);
+      case 'values':
+        return createArrayType('unknown', 0.8);
+      case 'entries':
+        return createArrayType('[string, unknown]', 0.8);
+      case 'assign':
+      case 'create':
+        return createPrimitiveType('object', 0.8);
+      case 'freeze':
+      case 'seal':
+      case 'preventExtensions':
+        // Returns the same object
+        if (args.length > 0 && t.isExpression(args[0])) {
+          return this.inferExpressionType(args[0], context);
+        }
+        return createPrimitiveType('object', 0.7);
+      case 'isFrozen':
+      case 'isSealed':
+      case 'isExtensible':
+        return createPrimitiveType('boolean', 1.0);
+      case 'getOwnPropertyNames':
+      case 'getOwnPropertySymbols':
+        return createArrayType('string', 1.0);
+      case 'getOwnPropertyDescriptor':
+      case 'getOwnPropertyDescriptors':
+        return createPrimitiveType('PropertyDescriptor | undefined', 0.8);
+      case 'getPrototypeOf':
+        return createPrimitiveType('object | null', 0.8);
+      case 'setPrototypeOf':
+        return createPrimitiveType('object', 0.8);
+      case 'defineProperty':
+      case 'defineProperties':
+        return createPrimitiveType('object', 0.8);
+      case 'hasOwn':
+      case 'hasOwnProperty':
+        return createPrimitiveType('boolean', 1.0);
+      default:
+        return createUnknownType(0.3);
+    }
+  }
+
+  /**
+   * Infer return type of Math methods
+   * @param methodName - Name of the Math method
+   * @returns Inferred return type
+   */
+  private inferMathMethodReturnType(methodName: string): InferredType {
+    switch (methodName) {
+      case 'abs':
+      case 'acos':
+      case 'acosh':
+      case 'asin':
+      case 'asinh':
+      case 'atan':
+      case 'atan2':
+      case 'atanh':
+      case 'cbrt':
+      case 'ceil':
+      case 'cos':
+      case 'cosh':
+      case 'exp':
+      case 'expm1':
+      case 'floor':
+      case 'hypot':
+      case 'log':
+      case 'log10':
+      case 'log1p':
+      case 'log2':
+      case 'max':
+      case 'min':
+      case 'pow':
+      case 'random':
+      case 'round':
+      case 'sign':
+      case 'sin':
+      case 'sinh':
+      case 'sqrt':
+      case 'tan':
+      case 'tanh':
+      case 'trunc':
+        return createPrimitiveType('number', 1.0);
+      default:
+        return createUnknownType(0.3);
+    }
+  }
+
+  /**
+   * Infer return type of JSON methods
+   * @param methodName - Name of the JSON method
+   * @returns Inferred return type
+   */
+  private inferJSONMethodReturnType(methodName: string): InferredType {
+    switch (methodName) {
+      case 'parse':
+        return createPrimitiveType('unknown', 0.7);
+      case 'stringify':
+        return createPrimitiveType('string', 1.0);
+      default:
+        return createUnknownType(0.3);
+    }
+  }
+
+  /**
+   * Infer return type of Promise methods
+   * @param methodName - Name of the Promise method
+   * @param promiseType - Type of the Promise
+   * @param args - Method arguments
+   * @param context - Type context
+   * @returns Inferred return type
+   */
+  private inferPromiseMethodReturnType(
+    methodName: string,
+    promiseType: InferredType,
+    args: Array<t.Expression | t.SpreadElement | t.ArgumentPlaceholder>,
+    context: TypeContext
+  ): InferredType {
+    switch (methodName) {
+      case 'resolve':
+      case 'reject':
+        // Static methods
+        if (args.length > 0 && t.isExpression(args[0])) {
+          const argType = this.inferExpressionType(args[0], context);
+          return createPrimitiveType(`Promise<${argType.value}>`, 0.9);
+        }
+        return createPrimitiveType('Promise<unknown>', 0.8);
+      case 'all':
+      case 'race':
+      case 'allSettled':
+      case 'any':
+        // Static methods that take arrays
+        return createPrimitiveType('Promise<unknown[]>', 0.8);
+      case 'then':
+      case 'catch':
+      case 'finally':
+        // Instance methods - try to infer from callback
+        if (args.length > 0 && t.isExpression(args[0])) {
+          const callbackReturnType = this.inferCallbackReturnType(args[0], 'unknown', context);
+          if (callbackReturnType.kind !== 'unknown') {
+            return createPrimitiveType(`Promise<${callbackReturnType.value}>`, 0.8);
+          }
+        }
+        return promiseType.value.startsWith('Promise<') ? promiseType : createPrimitiveType('Promise<unknown>', 0.7);
+      default:
+        return createUnknownType(0.3);
+    }
   }
 
   /**
    * Infer return type of array methods
    * @param methodName - Name of the array method
    * @param arrayType - Type of the array
+   * @param args - Method arguments
    * @param context - Type context
    * @returns Inferred return type
    */
   private inferArrayMethodReturnType(
     methodName: string,
     arrayType: InferredType,
+    args: Array<t.Expression | t.SpreadElement | t.ArgumentPlaceholder>,
     context: TypeContext
   ): InferredType {
     // Extract element type from array type (e.g., "string[]" -> "string")
-    const elementType = arrayType.value.replace('[]', '');
+    const elementType = arrayType.value.replace(/\[\]$/, '');
 
     switch (methodName) {
       case 'map':
+        // Try to infer return type from callback
+        if (args.length > 0 && t.isExpression(args[0])) {
+          const callbackReturnType = this.inferCallbackReturnType(args[0], elementType, context);
+          if (callbackReturnType.kind !== 'unknown') {
+            return createArrayType(callbackReturnType.value, 0.9);
+          }
+        }
+        return createArrayType(elementType, 0.9);
+      
       case 'filter':
+        return createArrayType(elementType, 0.9);
+      
+      case 'reduce':
+        // Try to infer from callback and initial value
+        if (args.length >= 2 && t.isExpression(args[1])) {
+          const initialValueType = this.inferExpressionType(args[1], context);
+          return initialValueType;
+        }
+        if (args.length > 0 && t.isExpression(args[0])) {
+          const callbackReturnType = this.inferCallbackReturnType(args[0], elementType, context);
+          if (callbackReturnType.kind !== 'unknown') {
+            return callbackReturnType;
+          }
+        }
+        return createUnknownType(0.5);
+      
       case 'slice':
       case 'concat':
         return createArrayType(elementType, 0.9);
+      
       case 'find':
       case 'pop':
       case 'shift':
         return createPrimitiveType(`${elementType} | undefined`, 0.9);
-      case 'reduce':
-        return createUnknownType(0.5);
+      
       case 'join':
         return createPrimitiveType('string', 1.0);
+      
       case 'indexOf':
       case 'lastIndexOf':
       case 'findIndex':
       case 'length':
         return createPrimitiveType('number', 1.0);
+      
       case 'includes':
       case 'some':
       case 'every':
         return createPrimitiveType('boolean', 1.0);
+      
       case 'forEach':
       case 'push':
       case 'unshift':
         return createPrimitiveType('void', 0.9);
+      
       default:
         return createUnknownType(0.3);
     }
+  }
+
+  /**
+   * Infer the return type of a callback function
+   * @param callback - Callback expression (arrow function or function expression)
+   * @param paramType - Expected parameter type
+   * @param context - Type context
+   * @returns Inferred return type of the callback
+   */
+  private inferCallbackReturnType(
+    callback: t.Expression,
+    paramType: string,
+    context: TypeContext
+  ): InferredType {
+    // Handle arrow functions
+    if (t.isArrowFunctionExpression(callback)) {
+      return this.inferFunctionReturnType(callback, context);
+    }
+
+    // Handle function expressions
+    if (t.isFunctionExpression(callback)) {
+      return this.inferFunctionReturnType(callback, context);
+    }
+
+    // Handle identifier (reference to a function)
+    if (t.isIdentifier(callback)) {
+      const funcType = context.scope.get(callback.name);
+      if (funcType && funcType.kind === 'function') {
+        // Try to extract return type from function signature
+        const match = funcType.value.match(/=>\s*(.+)$/);
+        if (match) {
+          return createPrimitiveType(match[1].trim(), funcType.confidence);
+        }
+      }
+    }
+
+    return createUnknownType(0.3);
   }
 
   /**

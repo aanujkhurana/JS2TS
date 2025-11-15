@@ -1214,4 +1214,444 @@ describe('TypeInferrer', () => {
       expect(type.value).toMatch(/\[\]/);
     });
   });
+
+  describe('Advanced Type Inference - Array Methods with Callbacks', () => {
+    it('should infer return type from array.map() with arrow function', () => {
+      const declarator = getFirstVariableDeclarator('const x = [1, 2, 3].map(n => n.toString());');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('string[]');
+      expect(type.confidence).toBeGreaterThan(0.8);
+    });
+
+    it('should infer return type from array.map() with number transformation', () => {
+      const declarator = getFirstVariableDeclarator('const x = ["1", "2"].map(s => parseInt(s));');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('number[]');
+      expect(type.confidence).toBeGreaterThan(0.8);
+    });
+
+    it('should infer return type from array.reduce() with initial value', () => {
+      const declarator = getFirstVariableDeclarator('const x = [1, 2, 3].reduce((acc, n) => acc + n, 0);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer return type from array.reduce() with string initial value', () => {
+      const declarator = getFirstVariableDeclarator('const x = [1, 2, 3].reduce((acc, n) => acc + n, "");');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('string');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer return type from array.filter()', () => {
+      const declarator = getFirstVariableDeclarator('const x = [1, 2, 3].filter(n => n > 1);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('number[]');
+      expect(type.confidence).toBeGreaterThan(0.8);
+    });
+
+    it('should handle nested array method chains', () => {
+      const declarator = getFirstVariableDeclarator('const x = [1, 2, 3].map(n => n * 2).filter(n => n > 2);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('number[]');
+    });
+  });
+
+  describe('Advanced Type Inference - Callback Function Types', () => {
+    it('should infer callback parameter type from usage', () => {
+      const code = `
+        function processArray(arr, callback) {
+          return arr.map(callback);
+        }
+      `;
+      const result = parser.parse(code);
+      const func = result.ast.program.body[0] as t.FunctionDeclaration;
+      const paramTypes = inferrer.inferParameterTypes(func, context);
+      
+      expect(paramTypes).toHaveLength(2);
+      expect(paramTypes[0].kind).toBe('array');
+      expect(paramTypes[1].value).toBe('Function');
+    });
+
+    it('should infer function type from arrow function assignment', () => {
+      const declarator = getFirstVariableDeclarator('const fn = (x) => x * 2;');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('function');
+      expect(type.value).toContain('=>');
+      expect(type.value).toContain('number');
+    });
+
+    it('should infer function type from function expression', () => {
+      const declarator = getFirstVariableDeclarator('const fn = function(x) { return x.toUpperCase(); };');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('function');
+      expect(type.value).toContain('=>');
+      expect(type.value).toContain('string');
+    });
+  });
+
+  describe('Advanced Type Inference - Union Types from Multiple Assignments', () => {
+    it('should detect union type from multiple assignments', () => {
+      const code = `
+        let x;
+        x = 5;
+        x = "hello";
+      `;
+      const result = parser.parse(code);
+      const statements = result.ast.program.body;
+      const unionTypes = inferrer.analyzeMultipleAssignments(statements, context);
+      
+      expect(unionTypes.has('x')).toBe(true);
+      const xType = unionTypes.get('x')!;
+      expect(xType.value).toContain('number');
+      expect(xType.value).toContain('string');
+    });
+
+    it('should detect union type from conditional assignments', () => {
+      const code = `
+        let result;
+        if (condition) {
+          result = 42;
+        } else {
+          result = "error";
+        }
+      `;
+      const result = parser.parse(code);
+      const statements = result.ast.program.body;
+      const unionTypes = inferrer.analyzeMultipleAssignments(statements, context);
+      
+      expect(unionTypes.has('result')).toBe(true);
+      const resultType = unionTypes.get('result')!;
+      expect(resultType.value).toContain('number');
+      expect(resultType.value).toContain('string');
+    });
+
+    it('should detect union type from loop assignments', () => {
+      const code = `
+        let value;
+        for (let i = 0; i < 10; i++) {
+          if (i % 2 === 0) {
+            value = i;
+          } else {
+            value = "odd";
+          }
+        }
+      `;
+      const result = parser.parse(code);
+      const statements = result.ast.program.body;
+      const unionTypes = inferrer.analyzeMultipleAssignments(statements, context);
+      
+      expect(unionTypes.has('value')).toBe(true);
+      const valueType = unionTypes.get('value')!;
+      expect(valueType.value).toContain('number');
+      expect(valueType.value).toContain('string');
+    });
+
+    it('should not create union for single assignment', () => {
+      const code = `
+        let x;
+        x = 42;
+      `;
+      const result = parser.parse(code);
+      const statements = result.ast.program.body;
+      const unionTypes = inferrer.analyzeMultipleAssignments(statements, context);
+      
+      expect(unionTypes.has('x')).toBe(false);
+    });
+  });
+
+  describe('Advanced Type Inference - Built-in Object Methods', () => {
+    it('should infer string array from Object.keys()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Object.keys({ a: 1, b: 2 });');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('string[]');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer array from Object.values()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Object.values({ a: 1, b: 2 });');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('unknown[]');
+    });
+
+    it('should infer array from Object.entries()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Object.entries({ a: 1, b: 2 });');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('[string, unknown][]');
+    });
+
+    it('should infer boolean from Object.hasOwn()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Object.hasOwn({ a: 1 }, "a");');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('boolean');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer object from Object.assign()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Object.assign({}, { a: 1 });');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('object');
+    });
+  });
+
+  describe('Advanced Type Inference - Math Methods', () => {
+    it('should infer number from Math.floor()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Math.floor(3.7);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer number from Math.random()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Math.random();');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer number from Math.max()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Math.max(1, 2, 3);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer number from Math.sqrt()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Math.sqrt(16);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+  });
+
+  describe('Advanced Type Inference - JSON Methods', () => {
+    it('should infer unknown from JSON.parse()', () => {
+      const declarator = getFirstVariableDeclarator('const x = JSON.parse("{}");');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('unknown');
+    });
+
+    it('should infer string from JSON.stringify()', () => {
+      const declarator = getFirstVariableDeclarator('const x = JSON.stringify({ a: 1 });');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('string');
+      expect(type.confidence).toBe(1.0);
+    });
+  });
+
+  describe('Advanced Type Inference - Constructor Calls', () => {
+    it('should infer Date from new Date()', () => {
+      const declarator = getFirstVariableDeclarator('const x = new Date();');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('Date');
+      expect(type.confidence).toBeGreaterThan(0.8);
+    });
+
+    it('should infer RegExp from new RegExp()', () => {
+      const declarator = getFirstVariableDeclarator('const x = new RegExp("test");');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('RegExp');
+      expect(type.confidence).toBeGreaterThan(0.8);
+    });
+
+    it('should infer Map from new Map()', () => {
+      const declarator = getFirstVariableDeclarator('const x = new Map();');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('Map');
+      expect(type.confidence).toBeGreaterThan(0.8);
+    });
+
+    it('should infer Set from new Set()', () => {
+      const declarator = getFirstVariableDeclarator('const x = new Set();');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('Set');
+      expect(type.confidence).toBeGreaterThan(0.8);
+    });
+  });
+
+  describe('Advanced Type Inference - Assignment Expressions', () => {
+    it('should infer type from assignment expression', () => {
+      const declarator = getFirstVariableDeclarator('const x = (y = 5);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer type from compound assignment', () => {
+      const declarator = getFirstVariableDeclarator('const x = (y += 5);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+  });
+
+  describe('Advanced Type Inference - Sequence Expressions', () => {
+    it('should infer type from last expression in sequence', () => {
+      const declarator = getFirstVariableDeclarator('const x = (1, 2, "three");');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('string');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer number from numeric sequence', () => {
+      const declarator = getFirstVariableDeclarator('const x = (1, 2, 3);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('number');
+      expect(type.confidence).toBe(1.0);
+    });
+  });
+
+  describe('Advanced Type Inference - Enhanced Built-in Functions', () => {
+    it('should infer array type from Array() with elements', () => {
+      const declarator = getFirstVariableDeclarator('const x = Array(1, 2, 3);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('number[]');
+    });
+
+    it('should infer Promise type from Promise constructor', () => {
+      const declarator = getFirstVariableDeclarator('const x = Promise.resolve(42);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toContain('Promise');
+    });
+
+    it('should infer symbol from Symbol()', () => {
+      const declarator = getFirstVariableDeclarator('const x = Symbol("test");');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('symbol');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer bigint from BigInt()', () => {
+      const declarator = getFirstVariableDeclarator('const x = BigInt(123);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('bigint');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer boolean from isNaN()', () => {
+      const declarator = getFirstVariableDeclarator('const x = isNaN(42);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('boolean');
+      expect(type.confidence).toBe(1.0);
+    });
+
+    it('should infer boolean from isFinite()', () => {
+      const declarator = getFirstVariableDeclarator('const x = isFinite(42);');
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('primitive');
+      expect(type.value).toBe('boolean');
+      expect(type.confidence).toBe(1.0);
+    });
+  });
+
+  describe('Advanced Type Inference - Complex Scenarios', () => {
+    it('should handle chained array methods with transformations', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = [1, 2, 3]
+          .map(n => n * 2)
+          .filter(n => n > 2)
+          .map(n => n.toString());
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('string[]');
+    });
+
+    it('should infer type from nested callbacks', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = [[1, 2], [3, 4]].map(arr => arr.map(n => n * 2));
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('number[][]');
+    });
+
+    it('should handle mixed method chains', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = Object.keys({ a: 1, b: 2 }).map(k => k.toUpperCase());
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('array');
+      expect(type.value).toBe('string[]');
+    });
+
+    it('should infer from complex reduce operation', () => {
+      const declarator = getFirstVariableDeclarator(`
+        const x = [1, 2, 3].reduce((acc, n) => {
+          acc[n] = n * 2;
+          return acc;
+        }, {});
+      `);
+      const type = inferrer.inferVariableType(declarator, context);
+      
+      expect(type.kind).toBe('object');
+    });
+  });
 });
