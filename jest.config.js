@@ -8,5 +8,10 @@ module.exports = {
     '!src/**/*.d.ts'
   ],
   coverageDirectory: 'coverage',
-  verbose: true
+  verbose: true,
+  globals: {
+    'ts-jest': {
+      isolatedModules: true
+    }
+  }
 };
