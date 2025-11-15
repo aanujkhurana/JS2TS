@@ -552,6 +552,11 @@ export class TypeInferrer {
       return this.inferStringMethodReturnType(methodName);
     }
 
+    // Number methods
+    if (objectType.value === 'number') {
+      return this.inferNumberMethodReturnType(methodName);
+    }
+
     // Object static methods
     if (objectType.value === 'Object' || (t.isIdentifier(memberExpr.object) && memberExpr.object.name === 'Object')) {
       return this.inferObjectStaticMethodReturnType(methodName, args, context);
@@ -899,6 +904,26 @@ export class TypeInferrer {
       case 'match':
       case 'matchAll':
         return createPrimitiveType('RegExpMatchArray | null', 0.9);
+      default:
+        return createUnknownType(0.3);
+    }
+  }
+
+  /**
+   * Infer return type of number methods
+   * @param methodName - Name of the number method
+   * @returns Inferred return type
+   */
+  private inferNumberMethodReturnType(methodName: string): InferredType {
+    switch (methodName) {
+      case 'toString':
+      case 'toFixed':
+      case 'toExponential':
+      case 'toPrecision':
+      case 'toLocaleString':
+        return createPrimitiveType('string', 1.0);
+      case 'valueOf':
+        return createPrimitiveType('number', 1.0);
       default:
         return createUnknownType(0.3);
     }

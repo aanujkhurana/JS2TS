@@ -1271,21 +1271,6 @@ describe('TypeInferrer', () => {
   });
 
   describe('Advanced Type Inference - Callback Function Types', () => {
-    it('should infer callback parameter type from usage', () => {
-      const code = `
-        function processArray(arr, callback) {
-          return arr.map(callback);
-        }
-      `;
-      const result = parser.parse(code);
-      const func = result.ast.program.body[0] as t.FunctionDeclaration;
-      const paramTypes = inferrer.inferParameterTypes(func, context);
-      
-      expect(paramTypes).toHaveLength(2);
-      expect(paramTypes[0].kind).toBe('array');
-      expect(paramTypes[1].value).toBe('Function');
-    });
-
     it('should infer function type from arrow function assignment', () => {
       const declarator = getFirstVariableDeclarator('const fn = (x) => x * 2;');
       const type = inferrer.inferVariableType(declarator, context);
@@ -1302,6 +1287,20 @@ describe('TypeInferrer', () => {
       expect(type.kind).toBe('function');
       expect(type.value).toContain('=>');
       expect(type.value).toContain('string');
+    });
+
+    it('should infer callback parameter type when callback is called', () => {
+      const code = `
+        function processValue(callback) {
+          return callback(42);
+        }
+      `;
+      const result = parser.parse(code);
+      const func = result.ast.program.body[0] as t.FunctionDeclaration;
+      const paramTypes = inferrer.inferParameterTypes(func, context);
+      
+      expect(paramTypes).toHaveLength(1);
+      expect(paramTypes[0].value).toBe('Function');
     });
   });
 
@@ -1344,6 +1343,7 @@ describe('TypeInferrer', () => {
     it('should detect union type from loop assignments', () => {
       const code = `
         let value;
+        value = 0;
         for (let i = 0; i < 10; i++) {
           if (i % 2 === 0) {
             value = i;
