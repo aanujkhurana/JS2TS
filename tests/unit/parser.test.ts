@@ -184,5 +184,97 @@ describe('JSParser', () => {
       
       expect(result.valid).toBe(true);
     });
+
+    it('should detect missing closing brace', () => {
+      const code = 'function test() { const x = 5;';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(result.error?.line).toBeGreaterThan(0);
+    });
+
+    it('should detect missing closing parenthesis', () => {
+      const code = 'const result = add(1, 2;';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should detect invalid object syntax', () => {
+      const code = 'const obj = { name: "John", age: };';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error?.message).toBeDefined();
+    });
+
+    it('should detect unclosed string literal', () => {
+      const code = 'const str = "unclosed string;';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should detect invalid arrow function syntax', () => {
+      const code = 'const fn = => x + 1;';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should detect invalid destructuring', () => {
+      const code = 'const { name, age } =;';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should detect multiple syntax errors and report first one', () => {
+      const code = 'const x = ; const y = ;';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(result.error?.line).toBe(1);
+    });
+
+    it('should provide accurate line numbers for multiline errors', () => {
+      const code = `
+        const x = 5;
+        const y = 10;
+        const z = ;
+      `;
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error?.line).toBe(4);
+    });
+
+    it('should detect invalid class syntax', () => {
+      const code = 'class MyClass { constructor( { }';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should validate empty code', () => {
+      const code = '';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate code with only comments', () => {
+      const code = '// Just a comment\n/* Another comment */';
+      const result = parser.validate(code);
+      
+      expect(result.valid).toBe(true);
+    });
   });
 });
