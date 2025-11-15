@@ -1102,12 +1102,12 @@ export class TypeInferrer {
 
   /**
    * Infer the return type of a function by analyzing its return statements
-   * @param node - Function node (FunctionDeclaration, FunctionExpression, or ArrowFunctionExpression)
+   * @param node - Function node (FunctionDeclaration, FunctionExpression, ArrowFunctionExpression, or ObjectMethod)
    * @param context - Type context
    * @returns Inferred return type with confidence score
    */
   inferFunctionReturnType(
-    node: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    node: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
     context: TypeContext
   ): InferredType {
     // Handle arrow functions with expression body (implicit return)
@@ -1210,12 +1210,12 @@ export class TypeInferrer {
 
   /**
    * Infer parameter types by analyzing how they are used within the function
-   * @param node - Function node (FunctionDeclaration, FunctionExpression, or ArrowFunctionExpression)
+   * @param node - Function node (FunctionDeclaration, FunctionExpression, ArrowFunctionExpression, or ObjectMethod)
    * @param context - Type context
    * @returns Array of inferred parameter types
    */
   inferParameterTypes(
-    node: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    node: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
     context: TypeContext
   ): InferredType[] {
     const paramTypes: InferredType[] = [];
@@ -1237,7 +1237,7 @@ export class TypeInferrer {
    */
   private inferParameterType(
     param: t.Identifier | t.Pattern | t.RestElement | t.TSParameterProperty,
-    functionNode: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    functionNode: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
     context: TypeContext
   ): InferredType {
     // Handle rest parameters
@@ -1279,7 +1279,7 @@ export class TypeInferrer {
    */
   private inferParameterTypeFromUsage(
     param: t.Identifier,
-    functionNode: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+    functionNode: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
     context: TypeContext
   ): InferredType {
     const usageTypes: InferredType[] = [];
