@@ -1,0 +1,10 @@
+src/
+tests/
+coverage/
+.kiro/
+*.test.ts
+*.test.js
+tsconfig.json
+jest.config.js
+.gitignore
+.DS_Store

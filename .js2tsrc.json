@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "JS to TS Converter Configuration",
+  "type": "object",
+  "properties": {
+    "strict": {
+      "type": "boolean",
+      "description": "Avoid using 'any' types when true",
+      "default": true
+    },
+    "preferInterfaces": {
+      "type": "boolean",
+      "description": "Use interfaces instead of type aliases",
+      "default": true
+    },
+    "targetTSVersion": {
+      "type": "string",
+      "description": "Target TypeScript version for syntax",
+      "default": "5.0",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "aiMode": {
+      "type": "boolean",
+      "description": "Enable AI-powered type inference",
+      "default": false
+    },
+    "aiConfig": {
+      "type": "object",
+      "description": "Configuration for AI provider",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["openai", "anthropic", "local"],
+          "description": "AI provider to use"
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "API key for the AI provider"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name to use"
+        },
+        "maxTokens": {
+          "type": "number",
+          "description": "Maximum tokens for AI requests",
+          "default": 1000
+        }
+      }
+    },
+    "excludePatterns": {
+      "type": "array",
+      "description": "Glob patterns for files to exclude",
+      "items": {
+        "type": "string"
+      },
+      "default": ["**/*.test.js", "**/node_modules/**"]
+    }
+  },
+  "default": {
+    "strict": true,
+    "preferInterfaces": true,
+    "targetTSVersion": "5.0",
+    "aiMode": false,
+    "excludePatterns": ["**/*.test.js", "**/node_modules/**"]
+  }
+}
